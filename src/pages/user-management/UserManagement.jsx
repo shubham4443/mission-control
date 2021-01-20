@@ -1,17 +1,17 @@
 import React, { useEffect } from 'react'
 import { useParams } from "react-router-dom";
-import ReactGA from 'react-ga';
-import { useSelector, useDispatch } from 'react-redux'
-import { Collapse, Icon } from 'antd';
+import { useSelector } from 'react-redux'
+import { RightOutlined } from '@ant-design/icons';
+import { Collapse } from 'antd';
 import Email from '../../components/user-management/Email'
 import Sidenav from '../../components/sidenav/Sidenav'
 import Topbar from '../../components/topbar/Topbar'
 import mailIcon from '../../assets/mailIcon.svg'
 import CollapseHeader from './CollapseHeader'
 import './user-management.css'
-import { decrement, increment } from 'automate-redux';
-import { setProjectConfig, notify, getProjectConfig } from '../../utils';
-import client from "../../client"
+import { notify, incrementPendingRequests, decrementPendingRequests } from '../../utils';
+import { saveUserManConfig, loadUserManConfig, getEmailConfig } from '../../operations/userMan';
+import { projectModules, actionQueuedMessage } from '../../constants';
 const { Panel } = Collapse;
 
 //const Panel = Collapse.Panel;
@@ -20,37 +20,31 @@ const UserManagement = () => {
   const { projectID } = useParams()
 
   useEffect(() => {
-    ReactGA.pageview("/projects/userman");
-  }, [])
+    incrementPendingRequests()
+    loadUserManConfig(projectID)
+      .catch(ex => notify("error", "Error fetching user management config", ex))
+      .finally(() => decrementPendingRequests())
+  }, [projectID])
 
-  const dispatch = useDispatch()
-
-  // Global state
-  const projects = useSelector(state => state.projects)
-
-  // Derived properties
-  const emailConfig = getProjectConfig(projects, projectID, "modules.userMan.email", {})
+  const emailConfig = useSelector(state => getEmailConfig(state))
 
   // Handlers
   const handleProviderConfig = (provider, config) => {
-    dispatch(increment("pendingRequests"))
-    client.userManagement.setUserManConfig(projectID, provider, config)
-      .then(() => {
-        setProjectConfig(projectID, `modules.userMan.${provider}`, config)
-        notify("success", "Success", "Saved user management config successfully")
-      })
-      .catch(ex => notify("error", "Error", ex))
-      .finally(() => dispatch(decrement("pendingRequests")))
+    incrementPendingRequests()
+    saveUserManConfig(projectID, provider, config)
+      .then(({ queued }) => notify("success", "Success", queued ? actionQueuedMessage : "Saved user management config successfully"))
+      .catch(ex => notify("error", "Error saving user management config", ex))
+      .finally(() => decrementPendingRequests())
   }
 
   return (
     <div className="user-management">
       <Topbar showProjectSelector />
       <div>
-        <Sidenav selectedItem="userman" />
+        <Sidenav selectedItem={projectModules.USER_MANAGEMENT} />
         <div className="page-content">
           <h2>Auth Providers</h2>
-          <Collapse style={{ marginTop: 24 }} accordion expandIconPosition="right" expandIcon={({ isActive }) => <Icon type="right" rotate={isActive ? 270 : 90} />}>
+          <Collapse style={{ marginTop: 24 }} accordion expandIconPosition="right" expandIcon={({ isActive }) => <RightOutlined rotate={isActive ? 270 : 90} />}>
             <Panel header={(<div style={{ padding: "8px 0px 8px 16px" }}><CollapseHeader icon={mailIcon} desc="Mail" /></div>)} key="1">
               <div style={{ paddingLeft: 16 }}>
                 <Email initialValues={emailConfig} handleSubmit={(config) => handleProviderConfig("email", config)} />
@@ -60,7 +54,7 @@ const UserManagement = () => {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 export default UserManagement;

@@ -1,28 +1,23 @@
 import React, { useState } from "react";
-import { Modal, Form, AutoComplete } from "antd";
-import { Controlled as CodeMirror } from "react-codemirror2";
+import { Modal, AutoComplete, Form } from "antd";
 import FormItemLabel from "../form-item-label/FormItemLabel";
-import "codemirror/theme/material.css";
-import "codemirror/lib/codemirror.css";
-import "codemirror/mode/javascript/javascript";
-import "codemirror/addon/selection/active-line.js";
-import "codemirror/addon/edit/matchbrackets.js";
-import "codemirror/addon/edit/closebrackets.js";
 import { defaultEventRule } from "../../constants";
-import { notify } from "../../utils";
+import { notify, isJson } from "../../utils";
+import JSONCodeMirror from "../json-code-mirror/JSONCodeMirror";
 
 const EventSecurityRuleForm = ({
-  form,
   handleSubmit,
   handleCancel,
   initialValues,
-  conformLoading,
   defaultRules,
   customEventTypes
 }) => {
-  const { getFieldDecorator, getFieldValue } = form;
+  const [form] = Form.useForm();
+  const [eventType, setEventType] = useState()
 
-  const eventType = getFieldValue("eventType");
+  const handleChangedValue = ({ eventType }) => {
+    setEventType(eventType)
+  }
 
   if (!initialValues) {
     initialValues = {
@@ -31,22 +26,16 @@ const EventSecurityRuleForm = ({
     };
   }
 
-  const [rule, setRule] = useState(
-    JSON.stringify(initialValues.rules, null, 2)
-  );
-
   const handleSubmitClick = e => {
-    e.preventDefault();
-    form.validateFields((err, values) => {
-      if (!err) {
-        try {
-          handleSubmit(values.eventType, JSON.parse(rule));
-        } catch (ex) {
-          notify("error", "Error", ex.toString());
-        }
+    form.validateFields().then(values => {
+      try {
+        handleSubmit(values.eventType, JSON.parse(values.rules))
+          .then(() => handleCancel())
+      } catch (ex) {
+        notify("error", "Error", ex.toString());
       }
     });
-  };
+  }
 
   return (
     <div>
@@ -57,43 +46,35 @@ const EventSecurityRuleForm = ({
         okText="Add"
         title="Add rule"
         onOk={handleSubmitClick}
-        confirmLoading={conformLoading}
         onCancel={handleCancel}
       >
-        <Form layout="vertical" onSubmit={handleSubmitClick}>
+        <Form layout="vertical" form={form} onFinish={handleSubmitClick} initialValues={{ rules: JSON.stringify(initialValues.rules, null, 2) }} onValuesChange={handleChangedValue}>
           <FormItemLabel name="Event Type" />
-          <Form.Item>
-            {getFieldDecorator("eventType", {
-              rules: [
-                { required: true, message: "Please provide a event type!" }
-              ]
-            })(
-              <AutoComplete
-                placeholder="Example: event-type"
-              >
-                {customEventTypes.filter(value => eventType ? (value.toLowerCase().includes(eventType.toLowerCase())) : true).map(type => (
-                  <AutoComplete.Option key={type}>{type}</AutoComplete.Option>
-                ))}
-              </AutoComplete>
-            )}
+          <Form.Item name="eventType" rules={[
+            { required: true, message: "Please provide a event type!" }
+          ]}>
+            <AutoComplete
+              placeholder="Example: event-type"
+            >
+              {customEventTypes.filter(value => eventType ? (value.toLowerCase().includes(eventType.toLowerCase())) : true).map(type => (
+                <AutoComplete.Option key={type}>{type}</AutoComplete.Option>
+              ))}
+            </AutoComplete>
           </Form.Item>
           <div>
             <FormItemLabel name="Rule" />
-            <CodeMirror
-              value={rule}
-              options={{
-                mode: { name: "javascript", json: true },
-                lineNumbers: true,
-                styleActiveLine: true,
-                matchBrackets: true,
-                autoCloseBrackets: true,
-                tabSize: 2,
-                autofocus: false
-              }}
-              onBeforeChange={(editor, data, value) => {
-                setRule(value);
-              }}
-            />
+            <Form.Item name="rules" rules={[{ required: true }, {
+              validateTrigger: "onBlur",
+              validator: (_, value, cb) => {
+                if (value && !isJson(value)) {
+                  cb("Please provide a valid JSON object!")
+                  return
+                }
+                cb()
+              }
+            }]}>
+              <JSONCodeMirror />
+            </Form.Item>
           </div>
         </Form>
       </Modal>
@@ -101,4 +82,4 @@ const EventSecurityRuleForm = ({
   );
 };
 
-export default Form.create({})(EventSecurityRuleForm);
+export default EventSecurityRuleForm;

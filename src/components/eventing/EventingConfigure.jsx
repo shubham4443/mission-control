@@ -1,46 +1,42 @@
 import React from 'react'
-import { Form, Select, Input, Button } from 'antd';
+import { AutoComplete, Button, Form, Checkbox } from 'antd';
+import ConditionalFormBlock from "../conditional-form-block/ConditionalFormBlock";
+import FormItemLabel from "../form-item-label/FormItemLabel";
 
 
-const { Option } = Select;
+const EventingConfigure = ({ initialValues, handleSubmit, dbList, loading }) => {
 
-const EventingConfigure = ({ form, dbType, handleSubmit, dbList }) => {
-	const { getFieldDecorator } = form;
-
+	const [form] = Form.useForm()
 	const handleSubmitClick = e => {
-		e.preventDefault();
-		form.validateFields((err, values) => {
-			if (!err) {
-				handleSubmit(values.dbType);
-			}
-		});
+		form.validateFields().then(values => {
+			handleSubmit(values)
+		})
+	}
+
+	if (!loading) {
+		form.setFieldsValue(initialValues)
 	}
 
 	return (
-		<div>
-			<p>The database and table/collection used by Space Cloud to store event logs</p>
-			<Form layout="inline">
-				<Form.Item>
-					{getFieldDecorator('dbType', {
-						rules: [{ required: true, message: 'Database is required!' }],
-						initialValue: dbType
-					})(
-						<Select placeholder="Database" style={{ minWidth: 200 }}>
-							{dbList.map((db) => (
-								<Select.Option value={db.alias} ><img src={db.svgIconSet} style={{ marginRight: 10 }} />{db.alias}</Select.Option>
-							))}
-						</Select>
-					)}
+		<Form form={form} >
+			<Form.Item name="enabled" valuePropName="checked">
+				<Checkbox>
+					Enable eventing module
+        </Checkbox>
+			</Form.Item>
+			<ConditionalFormBlock dependency="enabled" condition={() => form.getFieldValue("enabled")}>
+				<FormItemLabel name="Eventing DB" description="The database to store event invocation logs" />
+				<Form.Item name="dbAlias" rules={[{ required: true, message: 'Database is required!' }]}>
+					<AutoComplete placeholder="Choose an eventing database" style={{ width: 320 }} options={dbList.map(db => ({ value: db }))} />
 				</Form.Item>
-				<br />
-				<Form.Item>
-					<Button onClick={handleSubmitClick} >
-						Save
-          </Button>
-				</Form.Item>
-			</Form>
-		</div>
+			</ConditionalFormBlock>
+			<Form.Item>
+				<Button onClick={handleSubmitClick} >
+					Save
+				</Button>
+			</Form.Item>
+		</Form>
 	)
 }
 
-export default Form.create({})(EventingConfigure);
+export default EventingConfigure;

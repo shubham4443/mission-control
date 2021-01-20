@@ -1,38 +1,33 @@
-import React, { useState } from "react"
+import React from "react"
+import { Modal, Input, Form, Checkbox, AutoComplete, Alert } from 'antd';
+import FormItemLabel from "../../form-item-label/FormItemLabel";
+import ConditionalFormBlock from '../../conditional-form-block/ConditionalFormBlock';
+import { defaultDbConnectionStrings } from "../../../constants";
 
-import { Modal, Form, Input } from 'antd';
-import { Controlled as CodeMirror } from 'react-codemirror2';
-import FormItemLabel from "../../form-item-label/FormItemLabel"
-import 'codemirror/theme/material.css';
-import 'codemirror/lib/codemirror.css';
-import 'codemirror/mode/javascript/javascript'
-import 'codemirror/addon/selection/active-line.js'
-import 'codemirror/addon/edit/matchbrackets.js'
-import 'codemirror/addon/edit/closebrackets.js'
-import { notify } from '../../../utils';
+const EnableDBForm = ({ handleSubmit, handleCancel, initialValues, envSecrets }) => {
+  const [form] = Form.useForm();
 
-const EnableDBForm = ({ form, handleSubmit, handleCancel, initialValues }) => {
-  const { getFieldDecorator } = form;
-  const { conn, rules } = initialValues ? initialValues : {}
-
-  const [rule, setRule] = useState(JSON.stringify(rules, null, 2));
+  const formInitialValues = {
+    loadFromSecret: initialValues && initialValues.conn && initialValues.conn.startsWith('secrets.') ? true : false,
+    conn: initialValues && initialValues.conn && initialValues.conn.startsWith('secrets.') ? defaultDbConnectionStrings[initialValues.db] : initialValues.conn,
+    secret: initialValues && initialValues.conn && initialValues.conn.startsWith('secrets.') ? initialValues.conn.split('.')[1] : ''
+  }
 
   const handleSubmitClick = e => {
-    e.preventDefault();
-    form.validateFields((err, values) => {
-      if (!err) {
-        try {
-          handleSubmit(
-            values.conn,
-            JSON.parse(rule)
-          );
-          handleCancel();
-        } catch (ex) {
-          notify("error", "Error", ex.toString())
-        }
+    form.validateFields().then(values => {
+      let connectionString;
+      if(values.secret){
+        connectionString = `secrets.${values.secret}`;
+      }else{
+        connectionString = values.conn
       }
-    })
-  }
+      handleSubmit(connectionString).then(() => handleCancel())
+    });
+  };
+
+  const alertMsg = <div>
+    <b>Note:</b> If your database is running inside a docker container, use the container IP address of that docker container as the host in the connection string.
+  </div>
 
   return (
     <Modal
@@ -42,36 +37,34 @@ const EnableDBForm = ({ form, handleSubmit, handleCancel, initialValues }) => {
       onCancel={handleCancel}
       onOk={handleSubmitClick}
     >
-      <Form layout="vertical" onSubmit={handleSubmitClick}>
+      <Form layout="vertical" form={form} initialValues={formInitialValues} onFinish={handleSubmitClick}>
         <FormItemLabel name="Connection string" />
-        <Form.Item>
-          {getFieldDecorator("conn", {
-            rules: [{ required: true, message: 'Please provide a connection string!' }],
-            initialValue: conn
-          })(
-            <Input placeholder="Enter connection string of your database" />
-          )}
+        <Form.Item name='loadFromSecret'  valuePropName='checked'>
+          <Checkbox>Load connection string from a secret</Checkbox>
         </Form.Item>
-        <FormItemLabel name="Default rules" />
-        <CodeMirror
-          value={rule}
-          options={{
-            mode: { name: "javascript", json: true },
-            lineNumbers: true,
-            styleActiveLine: true,
-            matchBrackets: true,
-            autoCloseBrackets: true,
-            tabSize: 2,
-            autofocus: false
-          }}
-          onBeforeChange={(editor, data, value) => {
-            setRule(value)
-          }}
-        />
+        <ConditionalFormBlock 
+          dependency='loadFromSecret'
+          condition={() => form.getFieldValue('loadFromSecret') === false}
+        >
+          <Form.Item name="conn" rules={[{ required: true, message: 'Please input a connection string' }]}>
+            <Input.Password placeholder="eg: mongodb://localhost:27017" />
+          </Form.Item>
+          <Alert message={alertMsg}
+          description=" "
+          type="info"
+          showIcon />
+        </ConditionalFormBlock>
+        <ConditionalFormBlock
+          dependency='loadFromSecret'
+          condition={() => form.getFieldValue('loadFromSecret') === true}
+        >
+          <Form.Item name="secret" rules={[{ required: true, message: 'Please input a secret name' }]}>
+            <AutoComplete placeholder="secret name" options={envSecrets.map(secret => ({ value: secret }))} />
+          </Form.Item>
+        </ConditionalFormBlock>
       </Form>
     </Modal>
   );
 }
 
-export default Form.create({})(EnableDBForm);
-
+export default EnableDBForm;

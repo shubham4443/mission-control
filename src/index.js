@@ -2,15 +2,17 @@ import React from 'react';
 import ReactDOM from 'react-dom';
 import { Provider } from "react-redux";
 import store from "./store";
-import { onAppLoad } from './utils';
+import { performSetup, markSetupComplete } from './utils';
 import App from './App';
+import { makeServer } from "./mirage/server";
 import * as serviceWorker from './serviceWorker';
 import './index.css'
 
-import ReactGA from 'react-ga';
-import { defaultDbConnectionStrings } from './constants';
-if (process.env.NODE_ENV === "production")  {
-  ReactGA.initialize('UA-104521884-3');
+const jsonlint = require("jsonlint-mod");
+window.jsonlint = jsonlint;
+
+if (process.env.NODE_ENV !== 'production' && process.env.REACT_APP_ENABLE_MOCK) {
+  makeServer();
 }
 
 ReactDOM.render(
@@ -25,4 +27,8 @@ ReactDOM.render(
 // Learn more about service workers: https://bit.ly/CRA-PWA
 serviceWorker.unregister();
 
-onAppLoad()
+// Perform setup on app (re)load
+// It performs all the actions required to be done before user can start interacting with mission control.
+// This includes loading space cloud environment, refreshing token and fetching all resources that needs to be fetched.
+// A special loading page is shown untill this setup gets complete. 
+performSetup().then(() => markSetupComplete())

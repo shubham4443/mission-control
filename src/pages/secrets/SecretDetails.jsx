@@ -1,16 +1,18 @@
-import React, { useState,useEffect } from "react";
+import React, { useState } from "react";
 import Sidenav from "../../components/sidenav/Sidenav";
 import Topbar from "../../components/topbar/Topbar";
-import { Button, Table, Icon, Row, Col, Popconfirm, Card } from "antd";
-import ReactGA from 'react-ga';
+import { LeftOutlined } from '@ant-design/icons';
+import { Button, Table, Row, Col, Popconfirm, Card, Input, Empty } from "antd";
 import AddSecretKey from "../../components/secret/AddSecretKey";
 import UpdateRootPathModal from '../../components/secret/UpdateRootPathModal';
-import { getProjectConfig, setProjectConfig, notify } from "../../utils";
+import { notify, incrementPendingRequests, decrementPendingRequests } from "../../utils";
 import { useHistory, useParams } from "react-router-dom";
-import client from "../../client";
-import { useSelector, useDispatch } from "react-redux";
-import { increment, decrement } from "automate-redux";
+import { useSelector } from "react-redux";
 import './secretDetail.css';
+import { saveSecretKey, deleteSecretKey, saveRootPath, getSecrets } from "../../operations/secrets";
+import { projectModules, actionQueuedMessage } from "../../constants";
+import Highlighter from 'react-highlight-words';
+import EmptySearchResults from "../../components/utils/empty-search-results/EmptySearchResults";
 
 const getLabelFromSecretType = type => {
   switch (type) {
@@ -26,21 +28,27 @@ const getLabelFromSecretType = type => {
 const SecretDetails = () => {
   const history = useHistory();
   const { projectID, secretId } = useParams();
-  const dispatch = useDispatch();
-  const projects = useSelector(state => state.projects);
-  const secrets = getProjectConfig(projects, projectID, "modules.secrets", []);
+
+  // Global state
+  const secrets = useSelector(state => getSecrets(state))
+
+  // Component state
+  const [secretKeyModalVisible, setSecretKeyModalVisible] = useState(false);
+  const [secretKeyClicked, setSecretKeyClicked] = useState("");
+  const [rootPathModalVisible, setRootPathModalVisible] = useState(false);
+  const [searchText, setSearchText] = useState('')
+
+  // Derived state
   let secret = secrets.find(obj => obj.id === secretId);
   if (!secret) secret = { data: {} };
   const secretType = secret.type;
   const secretKeysData = Object.keys(secret.data).map(key => ({ name: key }));
-  const [secretKeyModalVisible, setSecretKeyModalVisible] = useState(false);
-  const [secretKeyClicked, setSecretKeyClicked] = useState("");
-  const [rootPathModalVisible, setRootPathModalVisible] = useState(false);
 
-  useEffect(() => {
-		ReactGA.pageview("/projects/secrets/secretDetails");
-  }, [])
-  
+  const filteredSecretKeys = secretKeysData.filter(secret => {
+    return secret.name.toLowerCase().includes(searchText.toLowerCase())
+  })
+
+  // Handlers
   const handleClickUpdateSecretKey = name => {
     setSecretKeyClicked(name);
     setSecretKeyModalVisible(true);
@@ -48,38 +56,34 @@ const SecretDetails = () => {
 
   const handleSetSecretKey = (key, value) => {
     return new Promise((resolve, reject) => {
-      dispatch(increment("pendingRequests"));
-      client.secrets
-        .setSecretKey(projectID, secretId, key, value)
-        .then(() => {
-          const newSecrets = secrets.map(obj => {
-            if (obj.id !== secretId) return obj;
-            const newData = Object.assign({}, secret.data, { [key]: value });
-            return Object.assign({}, secret, { data: newData });
-          });
-          setProjectConfig(projectID, "modules.secrets", newSecrets);
-          resolve();
+      incrementPendingRequests()
+      saveSecretKey(projectID, secretId, key, value)
+        .then(({ queued }) => {
+          notify("success", "Success", queued ? actionQueuedMessage : "Saved secret key successfully");
+          resolve()
         })
         .catch(ex => {
-          notify("error", "Error setting secret value", ex);
+          notify("error", "Error saving secret key value", ex);
           reject();
         })
-        .finally(() => dispatch(decrement("pendingRequests")));
+        .finally(() => decrementPendingRequests());
     });
   };
 
   const handleDeleteSecretKey = name => {
-    dispatch(increment("pendingRequests"));
-    client.secrets.deleteSecretKey(projectID, secretId, name).then(() => {
-      const newSecrets = secrets.map(obj => {
-        if (obj.id !== secretId) return obj;
-        const newData = Object.assign({}, secret.data);
-        delete newData[name]
-        return Object.assign({}, secret, { data: newData });
-      });
-      setProjectConfig(projectID, "modules.secrets", newSecrets);
-    }).catch(ex => notify("error", "Error deleting secret value", ex))
-    .finally(() => dispatch(decrement("pendingRequests")));
+    return new Promise((resolve, reject) => {
+      incrementPendingRequests()
+      deleteSecretKey(projectID, secretId, name)
+        .then(({ queued }) => {
+          notify("success", "Success", queued ? actionQueuedMessage : "Deleted secret key successfully");
+          resolve()
+        })
+        .catch(ex => {
+          notify("error", "Error saving secret key value", ex);
+          reject();
+        })
+        .finally(() => decrementPendingRequests());
+    });
   };
 
   const handleCancel = () => {
@@ -89,27 +93,32 @@ const SecretDetails = () => {
 
   const handleUpdateRootpath = (path) => {
     return new Promise((resolve, reject) => {
-      dispatch(increment("pendingRequests"));
-      client.secrets.setRootPath(projectID, secretId, { rootPath : path}).then(() => {
-        const updatedSecret = secrets.map(obj => {
-          if (obj.id !==  secretId) return obj;
-          const newData = Object.assign({}, { rootPath: path });
-          return Object.assign({}, obj, newData);
-        });
-        setProjectConfig(projectID, `modules.secrets`, updatedSecret);
-        notify("success", "Success", "Saved root path successfully")
-        resolve();
-      }).catch((ex) => {
-        notify("error", "Error in saving root path", ex.toString());
-        reject(ex)
-      }).finally(() => dispatch(decrement("pendingRequests")));
-    })
+      incrementPendingRequests()
+      saveRootPath(projectID, secretId, path)
+        .then(({ queued }) => {
+          notify("success", "Success", queued ? actionQueuedMessage : "Saved root path successfully");
+          resolve()
+        })
+        .catch(ex => {
+          notify("error", "Error saving root path", ex);
+          reject();
+        })
+        .finally(() => decrementPendingRequests());
+    });
   }
 
   const envColumns = [
     {
       title: "Environment Key",
-      dataIndex: "name"
+      dataIndex: "name",
+      render: (value) => {
+        return <Highlighter
+          highlightStyle={{ backgroundColor: '#ffc069', padding: 0 }}
+          searchWords={[searchText]}
+          autoEscape
+          textToHighlight={value ? value.toString() : ''}
+        />
+      }
     },
     {
       title: "Actions",
@@ -135,7 +144,15 @@ const SecretDetails = () => {
   const fileColumns = [
     {
       title: "File Name",
-      dataIndex: "name"
+      dataIndex: "name",
+      render: (value) => {
+        return <Highlighter
+          highlightStyle={{ backgroundColor: '#ffc069', padding: 0 }}
+          searchWords={[searchText]}
+          autoEscape
+          textToHighlight={value ? value.toString() : ''}
+        />
+      }
     },
     {
       title: "Actions",
@@ -161,7 +178,7 @@ const SecretDetails = () => {
   return (
     <div>
       <Topbar showProjectSelector />
-      <Sidenav selectedItem="secrets" />
+      <Sidenav selectedItem={projectModules.SECRETS} />
       <div>
         {secretKeyModalVisible && (
           <AddSecretKey
@@ -184,54 +201,69 @@ const SecretDetails = () => {
             }}
           >
             <Button type="link" onClick={() => history.goBack()}>
-              <Icon type="left" />
+              <LeftOutlined />
               Go back
             </Button>
             <span style={{ marginLeft: "35%" }}>{secretId}</span>
           </div>
           <br />
           <Row>
-            <Col lg={{ span: 15, offset: 1 }} xs={{ span:22, offset:1 }}>
+            <Col lg={{ span: 15, offset: 1 }} xs={{ span: 22, offset: 1 }}>
               {secretType === "file" && (
-                  <React.Fragment>
-                    <h3>Secret mount location <a style={{ textDecoration: "underline", fontSize: 14 }} onClick={() => setRootPathModalVisible(true)}>(Edit)</a></h3>
-                    <div className="mount-location">
-                      {secret.rootPath}
-                    </div>
-                    {rootPathModalVisible && (
-                      <UpdateRootPathModal
-                        rootPath={secret.rootPath}
-                        handleSubmit={handleUpdateRootpath}
-                        handleCancel={() => setRootPathModalVisible(false)}
-                      />
-                    )}
-                  </React.Fragment>
-                )}
-              <h3 style={{ display: "flex", justifyContent: "space-between" }}>
-                {getLabelFromSecretType(secretType)}
-                {secretType !== "docker" && (
-                  <Button
-                    onClick={() => setSecretKeyModalVisible(true)}
-                    type="primary"
-                  >
-                    Add
+                <React.Fragment>
+                  <h3>Secret mount location <a style={{ textDecoration: "underline", fontSize: 14 }} onClick={() => setRootPathModalVisible(true)}>(Edit)</a></h3>
+                  <div className="mount-location">
+                    {secret.rootPath}
+                  </div>
+                  {rootPathModalVisible && (
+                    <UpdateRootPathModal
+                      rootPath={secret.rootPath}
+                      handleSubmit={handleUpdateRootpath}
+                      handleCancel={() => setRootPathModalVisible(false)}
+                    />
+                  )}
+                </React.Fragment>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: '16px' }}>
+                <h3 style={{ margin: 'auto 0' }}>{getLabelFromSecretType(secretType)} {secretType !== 'docker' && filteredSecretKeys.length ? `(${filteredSecretKeys.length})` : ''}</h3>
+                <div style={{ display: 'flex' }}>
+                  {secretType !== "docker" && (<React.Fragment>
+                    <Input.Search placeholder={`Search by ${secretType} ${secretType === 'env' ? 'key' : 'name'}`} style={{ minWidth: '320px' }} allowClear={true} onChange={e => setSearchText(e.target.value)} />
+                    <Button
+                      style={{ marginLeft: '16px' }}
+                      onClick={() => setSecretKeyModalVisible(true)}
+                      type="primary"
+                    >
+                      Add
                   </Button>
-                )}
-              </h3>
+                  </React.Fragment>
+                  )}
+                </div>
+              </div>
               {secretType === "env" && (
                 <Table
                   columns={envColumns}
-                  dataSource={secretKeysData}
+                  dataSource={filteredSecretKeys}
                   bordered={true}
                   pagination={false}
+                  locale={{
+                    emptyText: secretKeysData.length !== 0 ?
+                      <EmptySearchResults searchText={searchText} /> :
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description='No environment variable created yet. Add a environment variable' />
+                  }}
                 />
               )}
               {secretType === "file" && (
                 <Table
                   columns={fileColumns}
-                  dataSource={secretKeysData}
+                  dataSource={filteredSecretKeys}
                   bordered={true}
                   pagination={false}
+                  locale={{
+                    emptyText: secretKeysData.length !== 0 ?
+                      <EmptySearchResults searchText={searchText} /> :
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description='No file secret created yet. Add a file secret' />
+                  }}
                 />
               )}
               {secretType === "docker" && (

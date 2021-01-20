@@ -1,63 +1,58 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import Sidenav from "../../components/sidenav/Sidenav";
 import Topbar from "../../components/topbar/Topbar";
-import security from "../../assets/security.svg";
-import { Button, Table, Popconfirm } from "antd";
-import ReactGA from 'react-ga';
+import { Button, Table, Popconfirm, Empty, Input } from "antd";
 import AddSecret from "../../components/secret/AddSecret";
 import UpdateDockerSecret from "../../components/secret/UpdateDockerSecret";
-import { getSecretType, getProjectConfig, setProjectConfig } from "../../utils";
+import { getSecretType, incrementPendingRequests, decrementPendingRequests } from "../../utils";
 import { useHistory, useParams } from "react-router-dom";
-import { useDispatch, useSelector } from "react-redux";
-import { increment, decrement } from "automate-redux";
-import client from "../../client";
+import { useSelector } from "react-redux";
 import { notify } from "../../utils";
+import { saveSecret, deleteSecret, getSecrets } from "../../operations/secrets";
+import { projectModules, actionQueuedMessage } from "../../constants";
+import Highlighter from 'react-highlight-words';
+import EmptySearchResults from "../../components/utils/empty-search-results/EmptySearchResults";
 
 const Secrets = () => {
   const history = useHistory();
   const { projectID } = useParams();
-  const dispatch = useDispatch();
-  const projects = useSelector(state => state.projects);
-  const secrets = getProjectConfig(projects, projectID, "modules.secrets", []);
+
+  // Global state
+  const secrets = useSelector(state => getSecrets(state))
+
+  // Component state
   const [secretModalVisible, setSecretModalVisible] = useState(false);
-  const [dockerSecretModalVisible, setDockerSecretModalVisible] = useState(
-    false
-  );
+  const [dockerSecretModalVisible, setDockerSecretModalVisible] = useState(false);
   const [secretIdClicked, setSecretIdClicked] = useState("");
+  const [searchText, setSearchText] = useState('')
 
+  const filteredSecrets = secrets.filter(secret => {
+    return secret.id.toLowerCase().includes(searchText.toLowerCase())
+  })
 
-  useEffect(() => {
-		ReactGA.pageview("/projects/secrets");
-  }, [])
-
+  // Handlers
   const handleAddSecret = (secretConfig) => {
     return new Promise((resolve, reject) => {
-      dispatch(increment("pendingRequests"));
-      client.secrets
-        .addSecret(projectID, secretConfig)
-        .then(() => {
-          const newSecrets = [...secrets.filter(obj => obj.id !== secretConfig.id), secretConfig];
-          setProjectConfig(projectID, "modules.secrets", newSecrets);
-          resolve();
+      incrementPendingRequests()
+      saveSecret(projectID, secretConfig)
+        .then(({ queued }) => {
+          notify("success", "Success", queued ? actionQueuedMessage : "Saved secret successfully")
+          resolve()
         })
         .catch(ex => {
-          notify("error", "Error adding secret", ex);
+          notify("error", "Error saving secret", ex);
           reject();
         })
-        .finally(() => dispatch(decrement("pendingRequests")));
+        .finally(() => decrementPendingRequests());
     });
   };
 
   const handleDeleteSecret = secretId => {
-    dispatch(increment("pendingRequests"));
-    client.secrets
-      .deleteSecret(projectID, secretId)
-      .then(() => {
-        const newSecrets = secrets.filter(obj => obj.id !== secretId);
-        setProjectConfig(projectID, "modules.secrets", newSecrets);
-      })
-      .catch(ex => notify("error", "Error adding secret", ex))
-      .finally(() => dispatch(decrement("pendingRequests")));
+    incrementPendingRequests()
+    deleteSecret(projectID, secretId)
+      .then(({ queued }) => notify("success", "Success", queued ? actionQueuedMessage : "Deleted secret successfully"))
+      .catch(ex => notify("error", "Error deleting secret", ex))
+      .finally(() => decrementPendingRequests());
   };
 
   const handleSecretView = secretId => {
@@ -74,15 +69,33 @@ const Secrets = () => {
     setSecretIdClicked("");
   };
 
+  const handleSecretModalCancel = () => {
+    setSecretModalVisible(false);
+  };
+
   const columns = [
     {
       title: "Name",
-      dataIndex: "id"
+      dataIndex: "id",
+      render: (value) => {
+        return <Highlighter
+          highlightStyle={{ backgroundColor: '#ffc069', padding: 0 }}
+          searchWords={[searchText]}
+          autoEscape
+          textToHighlight={value ? value.toString() : ''}
+        />
+      }
     },
     {
       title: "Type",
       key: "type",
-      render: (_, record) => getSecretType(record.type)
+      render: (_, record) => getSecretType(record.type),
+      filters: [
+        { text: 'Environment variable', value: 'env' },
+        { text: 'File secret', value: 'file' },
+        { text: 'Docker secret', value: 'docker' }
+      ],
+      onFilter: (value, record) => record.type.indexOf(value) === 0
     },
     {
       title: "Actions",
@@ -118,46 +131,29 @@ const Secrets = () => {
     }
   ];
 
-  const EmptyState = () => {
-    return (
-      <div style={{ marginTop: 24 }}>
-        <div className="rule-editor">
-          <div className="panel">
-            <img src={security} style={{ maxWidth: "500px" }} />
-            <p
-              className="panel__description"
-              style={{ marginTop: 32, marginBottom: 0 }}
-            >
-              Store private information required by your deployments in a
-              secure, encrypted format. Space Cloud takes care of all encryption
-              and decryption.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const handleSecretModalCancel = () => {
-    setSecretModalVisible(false);
-  };
-
   return (
     <div>
       <Topbar showProjectSelector />
       <div>
-        <Sidenav selectedItem="secrets" />
+        <Sidenav selectedItem={projectModules.SECRETS} />
         <div className="page-content">
-          <h3 style={{ display: "flex", justifyContent: "space-between" }}>
-            Secrets{" "}
-            <Button onClick={() => setSecretModalVisible(true)} type="primary">
-              Add
-            </Button>
-          </h3>
-          {secrets.length > 0 && (
-            <Table columns={columns} dataSource={secrets} bordered={true} onRow={(record) => { return { onClick: event => { handleSecretView(record.id) } } }} />
-          )}
-          {secrets.length === 0 && <EmptyState />}
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: '16px' }}>
+            <h3 style={{ margin: 'auto 0' }}>Secrets {filteredSecrets.length ? `(${filteredSecrets.length})` : ''}</h3>
+            <div style={{ display: 'flex' }}>
+              <Input.Search placeholder='Search by secret name' style={{ minWidth: '320px' }} allowClear={true} onChange={e => setSearchText(e.target.value)} />
+              <Button style={{ marginLeft: '16px' }} onClick={() => setSecretModalVisible(true)} type="primary">Add</Button>
+            </div>
+          </div>
+          <Table
+            columns={columns}
+            dataSource={filteredSecrets}
+            bordered={true}
+            onRow={(record) => { return { onClick: event => { handleSecretView(record.id) } } }}
+            locale={{
+              emptyText: secrets.length !== 0 ?
+                <EmptySearchResults searchText={searchText} /> :
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description='No secrets created yet. Add a secret' />
+            }} />
           {secretModalVisible && (
             <AddSecret
               handleCancel={handleSecretModalCancel}

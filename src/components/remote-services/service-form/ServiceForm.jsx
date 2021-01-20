@@ -1,20 +1,19 @@
 import React from "react"
-
-import { Modal, Form, Input } from 'antd';
+import { Modal, Input, Form } from 'antd';
 import FormItemLabel from "../../form-item-label/FormItemLabel"
 
 const ServiceForm = (props) => {
+  const [form] = Form.useForm();
+
   const handleSubmit = e => {
-    e.preventDefault();
-    props.form.validateFields((err, values) => {
-      if (!err) {
-        props.handleSubmit(values.name, values.url);
+    form.validateFields().then(values => {
+      props.handleSubmit(values.name, values.url).then(() => {
         props.handleCancel();
-        props.form.resetFields();
-      }
+        form.resetFields();
+      })
     });
   }
-  const { getFieldDecorator } = props.form;
+
   const { name, url } = props.initialValues ? props.initialValues : {}
   return (
     <Modal
@@ -24,43 +23,33 @@ const ServiceForm = (props) => {
       onCancel={props.handleCancel}
       onOk={handleSubmit}
     >
-      <Form layout="vertical" onSubmit={handleSubmit}>
+      <Form layout="vertical" form={form} onFinish={handleSubmit} initialValues={{ 'name': name, 'url': url }}>
         <FormItemLabel name="Service name" />
-        <Form.Item>
-          {getFieldDecorator('name', {
-            rules: [
-              {
-                validator: (_, value, cb) => {
-                  if (!value) {
-                    cb("Please provide a service name!")
-                    return
-                  }
-                  if (!(/^[0-9a-zA-Z]+$/.test(value))) {
-                    cb("Service name can only contain alphanumeric characters!")
-                    return
-                  }
-                  cb()
-                }
+        <Form.Item name="name" rules={[
+          {
+            validator: (_, value, cb) => {
+              if (!value) {
+                cb("Please provide a service name!")
+                return
               }
-            ],
-            initialValue: name
-          })(
-            <Input placeholder="Example: payment_service" disabled={props.initialValues ? true : false} />
-          )}
+              if (!(/^[0-9a-zA-Z]+$/.test(value))) {
+                cb("Service name can only contain alphanumeric characters!")
+                return
+              }
+              cb()
+            }
+          }
+        ]}>
+          <Input placeholder="Example: payment_service" disabled={props.initialValues ? true : false} />
         </Form.Item>
         <FormItemLabel name="URL" />
-        <Form.Item>
-          {getFieldDecorator('url', {
-            rules: [{ required: true, message: 'Please provide url!' }],
-            initialValue: url
-          })(
-            <Input placeholder="Example: http://localhost:3000" />
-          )}
+        <Form.Item name="url" rules={[{ required: true, message: 'Please provide url!' }]}>
+          <Input placeholder="Example: http://localhost:3000" />
         </Form.Item>
       </Form>
     </Modal>
   );
 }
 
-export default Form.create({ name: "service-form" })(ServiceForm)
+export default ServiceForm;
 

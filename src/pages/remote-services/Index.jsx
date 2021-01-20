@@ -1,36 +1,40 @@
 import React, { useState } from "react"
 import { useParams, useHistory } from "react-router-dom"
-import { useSelector, useDispatch } from "react-redux"
-import { increment, decrement } from "automate-redux"
-import client from "../../client"
-import { getProjectConfig, setProjectConfig, notify } from "../../utils"
+import { useSelector } from "react-redux"
+import { notify, incrementPendingRequests, decrementPendingRequests } from "../../utils"
 
-import { Button, Table, Popconfirm } from "antd"
+import { Button, Table, Popconfirm, Input, Empty } from "antd"
 import ServiceForm from "../../components/remote-services/service-form/ServiceForm"
 import Topbar from "../../components/topbar/Topbar"
 import Sidenav from "../../components/sidenav/Sidenav"
+import { saveRemoteService, deleteRemoteService, getRemoteServices } from "../../operations/remoteServices"
 
 import remoteServicesSvg from "../../assets/remote-services.svg"
+import { projectModules, actionQueuedMessage } from "../../constants";
+import Highlighter from "react-highlight-words";
+import EmptySearchResults from "../../components/utils/empty-search-results/EmptySearchResults";
 
 const RemoteServices = () => {
   // Router params
   const { projectID } = useParams()
-
-  const dispatch = useDispatch()
   const history = useHistory()
 
   // Global state
-  const projects = useSelector(state => state.projects)
+  const services = useSelector(state => getRemoteServices(state))
 
   // Component state
   const [modalVisible, setModalVisible] = useState(false)
   const [serviceClicked, setServiceClicked] = useState("")
+  const [searchText, setSearchText] = useState('')
 
   // Derived state
-  const services = getProjectConfig(projects, projectID, "modules.remoteServices.externalServices", {})
   const servicesTableData = Object.entries(services).map(([name, { url }]) => ({ name, url }))
   const noOfServices = servicesTableData.length
   const serviceClickedInfo = serviceClicked ? { name: serviceClicked, url: services[serviceClicked].url } : undefined
+
+  const filteredServicesData = servicesTableData.filter(service => {
+    return service.name.toLowerCase().includes(searchText.toLowerCase());
+  })
 
   // Handlers
   const handleEditClick = (name) => {
@@ -44,14 +48,24 @@ const RemoteServices = () => {
   }
 
   const handleSubmit = (name, url) => {
-    const serviceConfig = services[name]
-    const newServiceConfig = Object.assign({}, serviceConfig ? serviceConfig : { endpoints: {} }, { url })
-    const newServices = Object.assign({}, services, { [name]: newServiceConfig })
-    dispatch(increment("pendingRequests"))
-    client.remoteServices.setServiceConfig(projectID, name, newServiceConfig).then(() => {
-      setProjectConfig(projectID, `modules.remoteServices.externalServices`, newServices)
-      notify("success", "Success", `${serviceConfig ? "Modified" : "Added"} service successfully`)
-    }).catch(ex => notify("error", "Error", ex)).finally(() => dispatch(decrement("pendingRequests")))
+    return new Promise((resolve, reject) => {
+      const serviceConfig = services[name]
+      const newServiceConfig = Object.assign({}, serviceConfig ? serviceConfig : { endpoints: {} }, { url })
+      incrementPendingRequests()
+      saveRemoteService(projectID, name, newServiceConfig)
+        .then(({ queued }) => {
+          if (!serviceConfig) {
+            history.push(`/mission-control/projects/${projectID}/remote-services/${name}`)
+          }
+          notify("success", "Success", queued ? actionQueuedMessage : `${serviceConfig ? "Modified" : "Added"} remote service successfully`)
+          resolve()
+        })
+        .catch((ex) => {
+          notify("error", `Error ${serviceConfig ? "modifying" : "adding"} remote service`, ex)
+          reject()
+        })
+        .finally(() => decrementPendingRequests())
+    })
   }
 
   const handleViewClick = (name) => {
@@ -59,20 +73,26 @@ const RemoteServices = () => {
   }
 
   const handleDelete = (name) => {
-    dispatch(increment("pendingRequests"))
-    client.remoteServices.deleteServiceConfig(projectID, name).then(() => {
-      const newServices = Object.assign({}, services)
-      delete newServices[name]
-      setProjectConfig(projectID, "modules.remoteServices.externalServices", newServices)
-      notify("success", "Success", "Removed service successfully")
-    }).catch(ex => notify("error", "Error", ex)).finally(() => dispatch(decrement("pendingRequests")))
+    incrementPendingRequests()
+    deleteRemoteService(projectID, name)
+      .then(({ queued }) => notify("success", "Success", queued ? actionQueuedMessage : "Removed remote service successfully"))
+      .catch(ex => notify("error", "Error removing remote service", ex))
+      .finally(() => decrementPendingRequests())
   }
 
   const tableColumns = [
     {
       title: 'Name',
       dataIndex: 'name',
-      key: 'name'
+      key: 'name',
+      render: (value) => {
+        return <Highlighter
+          highlightStyle={{ backgroundColor: '#ffc069', padding: 0 }}
+          searchWords={[searchText]}
+          autoEscape
+          textToHighlight={value ? value.toString() : ''}
+        />
+      }
     },
     {
       title: 'Actions',
@@ -100,7 +120,7 @@ const RemoteServices = () => {
   return (
     <React.Fragment>
       <Topbar showProjectSelector />
-      <Sidenav selectedItem='remote-services' />
+      <Sidenav selectedItem={projectModules.REMOTE_SERVICES} />
       <div className='page-content'>
         {noOfServices === 0 && <div style={{ marginTop: 24 }}>
           <div className="panel">
@@ -111,8 +131,22 @@ const RemoteServices = () => {
         </div>}
         {noOfServices > 0 && (
           <React.Fragment>
-            <h3 style={{ display: "flex", justifyContent: "space-between" }}>Remote Services <Button onClick={() => setModalVisible(true)} type="primary">Add</Button></h3>
-            <Table columns={tableColumns} dataSource={servicesTableData} onRow={(record) => { return { onClick: event => { handleViewClick(record.name) } } }} />
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: '16px' }}>
+              <h3 style={{ margin: 'auto 0' }}>Remote Services {filteredServicesData.length ? `(${filteredServicesData.length})` : ''}</h3>
+              <div style={{ display: 'flex' }}>
+                <Input.Search placeholder='Search by remote service name' style={{ minWidth: '320px' }} allowClear={true} onChange={e => setSearchText(e.target.value)} />
+                <Button style={{ marginLeft: '16px' }} onClick={() => setModalVisible(true)} type="primary">Add</Button>
+              </div>
+            </div>
+            <Table
+              columns={tableColumns}
+              dataSource={filteredServicesData}
+              onRow={(record) => { return { onClick: event => { handleViewClick(record.name) } } }}
+              locale={{
+                emptyText: servicesTableData.length !== 0 ?
+                  <EmptySearchResults searchText={searchText} /> :
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description='No remote service created yet. Add a remote service' />
+              }} />
           </React.Fragment>
         )}
         {modalVisible && <ServiceForm

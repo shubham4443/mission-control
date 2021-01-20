@@ -37,7 +37,7 @@
 
 .topbar>span {
     color: #000;
-    padding-left: 120px;
+    padding-left: 10px;
     padding-right: 10px;
     font-size: 14px;
     font-weight: 600;
@@ -75,6 +75,10 @@
 .popContent {
     padding: 10px 30px;
 }
+
+/* .ant-popover-inner-content{
+    padding: 0;
+} */
 
 .topbar .ant-menu-horizontal > .ant-menu-item,
 .ant-menu-horizontal > .ant-menu-item:hover, 
